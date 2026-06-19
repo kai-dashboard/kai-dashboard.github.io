@@ -52,13 +52,16 @@
     border-radius:8px;padding:10px 14px;margin-bottom:18px;white-space:pre-wrap;font-size:12px}
   .empty{color:var(--muted);padding:14px;text-align:center}
   a{color:var(--blue)}
-  /* lab selector */
-  .labs{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:18px}
-  .labs a{display:inline-block;padding:4px 12px;border-radius:999px;font-size:13px;
+  /* filter selectors */
+  #filters{margin-bottom:18px}
+  .frow{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:6px}
+  .frow .flabel{color:var(--muted);font-size:11px;text-transform:uppercase;
+    letter-spacing:.5px;min-width:70px}
+  .frow a{display:inline-block;padding:3px 11px;border-radius:999px;font-size:13px;
     text-decoration:none;border:1px solid var(--border);background:var(--panel);
     color:var(--fg)}
-  .labs a:hover{border-color:var(--blue)}
-  .labs a.active{background:var(--blue);border-color:var(--blue);color:#0d1117;font-weight:600}
+  .frow a:hover{border-color:var(--blue)}
+  .frow a.active{background:var(--blue);border-color:var(--blue);color:#0d1117;font-weight:600}
   /* clickable workload rows */
   tr.clk{cursor:pointer}
   tr.clk:hover td{background:rgba(88,166,255,.08)}
@@ -90,7 +93,7 @@
     · refresh <span id="refresh">?</span>s</span>
 </header>
 <main>
-  <div class="labs" id="labs"></div>
+  <div id="filters"></div>
   <div id="errors"></div>
   <div class="cards" id="cards"></div>
   <section><h2 id="nodes-h">Nodes</h2><div id="nodes"></div></section>
@@ -110,6 +113,9 @@
 // JSON snapshots from a gist instead of the live /api/* backend. GIST_BASE
 // comes from a sibling config.json so the URL isn't baked into the HTML.
 var STATIC = !!window.KAI_STATIC, GIST_BASE = null;
+// Base path of the current page (ends with "/"), so API calls work whether the
+// dashboard is served at "/" or behind a path prefix like "/workstations/".
+var BASE = location.pathname.replace(/[^/]*$/, "");
 function esc(s){return String(s==null?"":s).replace(/[&<>"]/g,c=>(
   {"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;"}[c]));}
 
@@ -166,20 +172,53 @@ function card(label,value,cls){
     '<div class="value '+(cls||"")+'">'+value+'</div></div>';
 }
 
-function renderLabs(d){
-  var cur=d.lab, html=
-    '<a href="?" class="'+(!cur?"active":"")+'" onclick="navigate(null);return false;">All</a>';
-  (d.labs||[]).forEach(function(l){
-    html+='<a href="?lab='+encodeURIComponent(l)+'" class="'+(cur===l?"active":"")+
-      '" onclick="navigate(\''+l+'\');return false;">'+esc(l)+'</a>';
+// ── client-side filtering by lab / node / queue (any combination) ──
+function getFacets(){
+  var p=qs();
+  return {lab:p.get("lab")||null, node:p.get("node")||null, queue:p.get("queue")||null};
+}
+function anyFacet(f){ return !!(f.lab||f.node||f.queue); }
+
+function applyFilters(d, f){
+  var wl=(d.workloads||[]).filter(function(w){
+    return (!f.lab || w.namespace===f.lab)
+        && (!f.node || w.node===f.node)
+        && (!f.queue || w.queue===f.queue);
   });
-  document.getElementById("labs").innerHTML=html;
+  var nodes, queues;
+  if(f.node){
+    nodes=(d.nodes||[]).filter(function(n){return n.name===f.node;});
+  } else if(anyFacet(f)){
+    var ns={}; wl.forEach(function(w){ if(w.node&&w.node!=="—") ns[w.node]=1; });
+    nodes=(d.nodes||[]).filter(function(n){return ns[n.name];});
+  } else nodes=d.nodes||[];
+  if(f.queue){
+    queues=(d.queues||[]).filter(function(q){return q.name===f.queue;});
+  } else if(anyFacet(f)){
+    var qq={}; wl.forEach(function(w){ if(w.queue&&w.queue!=="—") qq[w.queue]=1; });
+    queues=(d.queues||[]).filter(function(q){return qq[q.name]||(f.lab&&q.name.indexOf(f.lab+"-")===0);});
+  } else queues=d.queues||[];
+  return {workloads:wl, nodes:nodes, queues:queues};
+}
+function utilOf(nodes){
+  var s=0,c=0; nodes.forEach(function(n){ if(n.util_avg!=null){ var g=n.gpu_total||1; s+=n.util_avg*g; c+=g; }});
+  return c? Math.round(s/c) : null;
+}
+function filterRow(label, facet, values, cur){
+  var h='<div class="frow"><span class="flabel">'+label+'</span>'+
+    '<a class="'+(!cur?"active":"")+'" href="#" onclick="setFacet(\''+facet+'\',null);return false;">All</a>';
+  (values||[]).forEach(function(v){
+    var ev=String(v).replace(/'/g,"\\'");
+    h+='<a class="'+(cur===v?"active":"")+'" href="#" onclick="setFacet(\''+facet+'\',\''+ev+'\');return false;">'+esc(v)+'</a>';
+  });
+  return h+'</div>';
 }
 
 function render(d){
-  var lab = d.scope==="lab";
+  var f=getFacets(), filt=applyFilters(d,f), on=anyFacet(f);
   document.getElementById("title").textContent = d.title;
-  document.title = d.title + (lab? (" · "+d.lab):"");
+  var fl=[]; if(f.lab)fl.push("lab:"+f.lab); if(f.node)fl.push("node:"+f.node); if(f.queue)fl.push("queue:"+f.queue);
+  document.title = d.title + (fl.length? (" · "+fl.join(" ")):"");
   document.getElementById("cluster").innerHTML =
     "context <b>"+esc(d.cluster.context)+"</b>"+
     (d.cluster.server? " · "+esc(d.cluster.server):"");
@@ -187,30 +226,40 @@ function render(d){
   document.getElementById("refresh").textContent = d.refresh;
   document.getElementById("ver").textContent = d.version;
   document.getElementById("status-dot").className = "ok";
-  document.getElementById("nodes-h").textContent = lab? ("Nodes in use — "+d.lab) : "Nodes";
-  document.getElementById("wl-h").textContent = lab? (d.lab+" — workloads") : "GPU workloads";
+  document.getElementById("nodes-h").textContent = on? "Nodes (filtered)" : "Nodes";
+  document.getElementById("wl-h").textContent = on? "Workloads (filtered)" : "GPU workloads";
   document.getElementById("scope-note").textContent =
-    (lab? ("lab view: "+d.lab) : "cluster-wide") + (STATIC? " · static snapshot" : "");
-  renderLabs(d);
+    (fl.length? ("filter: "+fl.join(" · ")) : "cluster-wide") + (STATIC? " · static snapshot" : "");
+  document.getElementById("filters").innerHTML =
+    filterRow("Lab","lab",d.labs,f.lab) +
+    filterRow("Node","node",d.node_names,f.node) +
+    filterRow("Queue","queue",d.queue_names,f.queue);
 
   document.getElementById("errors").innerHTML =
     (d.errors && d.errors.length)? '<div class="errbox">'+esc(d.errors.join("\n"))+'</div>':'';
 
-  var s=d.summary;
-  var pendCls = s.pending>0?"bad":"muted";
-  var utilDisp = (s.gpu_util==null)? '<small class="muted">n/a</small>' : s.gpu_util+'%';
-  var utilCls = (s.gpu_util==null)? "muted" : (s.gpu_util>=85?"bad":(s.gpu_util>=40?"warn":"ok"));
   var cards;
-  if(lab){
+  if(on){
+    var run=filt.workloads.filter(function(w){return w.status==="Running";});
+    var usedG=run.reduce(function(a,w){return a+(w.gpus||0);},0);
+    var pend=filt.workloads.filter(function(w){return w.status==="Pending";}).length;
+    var u=utilOf(filt.nodes);
+    var uDisp=(u==null)?'<small class="muted">n/a</small>':u+'%';
+    var uCls=(u==null)?"muted":(u>=85?"bad":(u>=40?"warn":"ok"));
+    var byQuota=!!(f.queue||f.lab);
+    var quota=filt.queues.reduce(function(a,q){return a+(q.quota!=null?q.quota:0);},0);
+    var capTot=filt.nodes.reduce(function(a,n){return a+(n.gpu_total||0);},0);
     cards =
-      card("GPUs in use", s.gpu_used) +
-      card("Queue quota", s.gpu_quota==null?0:s.gpu_quota) +
-      card("Quota free", s.gpu_free==null?'<span class="muted">—</span>':s.gpu_free,
-           s.gpu_free!=null&&s.gpu_free<0?"bad":"") +
-      card("Avg GPU util", utilDisp, utilCls) +
-      card("Running", s.running) +
-      card("Pending", s.pending, pendCls);
+      card("GPUs in use", usedG) +
+      card(byQuota?"Queue quota":"GPUs in view", byQuota?quota:capTot) +
+      card("Avg GPU util", uDisp, uCls) +
+      card("Nodes in view", filt.nodes.length) +
+      card("Running", run.length) +
+      card("Pending", pend, pend>0?"bad":"muted");
   } else {
+    var s=d.summary;
+    var utilDisp=(s.gpu_util==null)?'<small class="muted">n/a</small>':s.gpu_util+'%';
+    var utilCls=(s.gpu_util==null)?"muted":(s.gpu_util>=85?"bad":(s.gpu_util>=40?"warn":"ok"));
     cards =
       card("GPUs in use", s.gpu_used+' <small>/ '+s.gpu_total+'</small>') +
       card("GPUs free", s.gpu_free, s.gpu_free>0?"ok":"muted") +
@@ -218,7 +267,7 @@ function render(d){
       card("Nodes ready", s.nodes_ready+' <small>/ '+s.nodes_total+'</small>',
            s.nodes_ready===s.nodes_total?"ok":"warn") +
       card("Running", s.running) +
-      card("Pending", s.pending, pendCls);
+      card("Pending", s.pending, s.pending>0?"bad":"muted");
   }
   document.getElementById("cards").innerHTML = cards;
 
@@ -226,7 +275,7 @@ function render(d){
     [{label:"Node"},{label:"Status"},{label:"CPU"},{label:"Mem"},
      {label:"GPU (alloc)"},{label:"GPU util"},{label:"GPU mem"},
      {label:"Product"},{label:"Heartbeat",num:true},{label:"Conditions"}],
-    d.nodes, n=>
+    filt.nodes, n=>
       '<td>'+esc(n.name)+'</td>'+
       '<td>'+statusPill(n.status)+'</td>'+
       '<td>'+cpuCell(n)+'</td>'+
@@ -236,26 +285,29 @@ function render(d){
       '<td>'+memCell(n)+'</td>'+
       '<td class="muted">'+esc(n.product)+'</td>'+
       '<td class="num">'+esc(n.heartbeat)+'</td>'+
-      '<td class="'+(n.conditions?"bad":"muted")+'">'+esc(n.conditions||"—")+'</td>');
+      '<td class="'+(n.conditions?"bad":"muted")+'">'+esc(n.conditions||"—")+'</td>',
+    n=>'class="clk" onclick="setFacet(\'node\',\''+n.name+'\')"');
 
   document.getElementById("queues").innerHTML = table(
     [{label:"Queue"},{label:"Parent"},{label:"Priority",num:true},
      {label:"Quota",num:true},{label:"Used",num:true},{label:"Free",num:true}],
-    d.queues, q=>
+    filt.queues, q=>
       '<td>'+esc(q.name)+'</td>'+
       '<td class="muted">'+esc(q.parent||"—")+'</td>'+
       '<td class="num muted">'+(q.priority==null?"—":q.priority)+'</td>'+
       '<td class="num">'+(q.quota==null?'<span class="muted">—</span>':q.quota)+'</td>'+
       '<td class="num">'+q.used+'</td>'+
-      '<td class="num '+(q.free!=null&&q.free<0?"bad":"")+'">'+(q.free==null?'<span class="muted">—</span>':q.free)+'</td>');
+      '<td class="num '+(q.free!=null&&q.free<0?"bad":"")+'">'+(q.free==null?'<span class="muted">—</span>':q.free)+'</td>',
+    q=>'class="clk" onclick="setFacet(\'queue\',\''+q.name+'\')"');
 
   document.getElementById("workloads").innerHTML = table(
-    [{label:"Namespace"},{label:"Name"},{label:"Queue"},{label:"GPUs",num:true},
+    [{label:"Namespace"},{label:"Name"},{label:"User"},{label:"Queue"},{label:"GPUs",num:true},
      {label:"Status"},{label:"Node"},{label:"Age",num:true}],
-    d.workloads, w=>{
+    filt.workloads, w=>{
       var cls = w.status==="Running"?"ok":(w.status==="Pending"?"warn":"muted");
       return '<td class="muted">'+esc(w.namespace)+'</td>'+
       '<td>'+esc(w.name)+'</td>'+
+      '<td>'+(w.user&&w.user!=="—"?esc(w.user):'<span class="muted">—</span>')+'</td>'+
       '<td class="muted">'+esc(w.queue)+'</td>'+
       '<td class="num">'+(w.gpus||'<span class="muted">0</span>')+'</td>'+
       '<td><span class="'+cls+'">'+esc(w.status)+'</span></td>'+
@@ -272,6 +324,7 @@ function renderPod(d){
   var pc = d.phase==="Running"?"ok":(d.phase==="Pending"?"warn":"muted");
   row("Status",'<span class="'+pc+'">'+esc(d.phase||"?")+'</span>'+
       (d.reason?' <span class="muted">('+esc(d.reason)+')</span>':''));
+  row("User", esc(d.user||"—"));
   row("Node", esc(d.node||"—"));
   row("Queue", esc(d.queue||"—"));
   row("Priority", esc(d.priority||"—"));
@@ -307,21 +360,24 @@ async function openPod(ns,name){
   document.getElementById("modal-body").innerHTML = '<p class="muted">loading…</p>';
   m.classList.remove("hidden");
   try{
-    var r=await fetch("/api/pod?namespace="+encodeURIComponent(ns)+"&name="+encodeURIComponent(name),{cache:"no-store"});
+    var r=await fetch(BASE+"api/pod?namespace="+encodeURIComponent(ns)+"&name="+encodeURIComponent(name),{cache:"no-store"});
     var d=await r.json(); if(d.error) throw new Error(d.error);
     renderPod(d);
   }catch(e){ document.getElementById("modal-body").innerHTML='<div class="errbox">'+esc(e.message)+'</div>'; }
 }
 function closeModal(){ document.getElementById("modal").classList.add("hidden"); }
 
-// ── routing (bookmarkable ?lab= and ?pod=ns/name) ──
+// ── routing: filtering is client-side, so facets just re-draw the cached data.
+// Bookmarkable: ?lab= ?node= ?queue= (compose), plus ?pod=ns/name (live modal).
 function qs(){ return new URLSearchParams(location.search); }
-var currentLab=null, refreshMs=10000, timer=null;
+var lastData=null, refreshMs=10000, timer=null;
 
-function navigate(lab){
-  var p=qs(); if(lab) p.set("lab",lab); else p.delete("lab"); p.delete("pod");
+function setFacet(name, value){
+  var p=qs();
+  if(value) p.set(name, value); else p.delete(name);
+  p.delete("pod");
   history.pushState({}, "", location.pathname + (p.toString()?("?"+p):""));
-  applyState();
+  draw();
 }
 function openPodNav(ns,name){
   var p=qs(); p.set("pod", ns+"/"+name);
@@ -329,9 +385,9 @@ function openPodNav(ns,name){
   openPod(ns,name);
 }
 function closeModalNav(){ if(qs().get("pod")) history.back(); else closeModal(); }
+function draw(){ if(lastData) render(lastData); }     // re-render from cached data (instant)
 function applyState(){
-  currentLab = qs().get("lab") || null;
-  tickNow();
+  draw();
   if(STATIC){ closeModal(); return; }   // no per-pod backend in static mode
   var pod = qs().get("pod");
   if(pod){ var i=pod.indexOf("/"); openPod(pod.slice(0,i), pod.slice(i+1)); }
@@ -349,14 +405,14 @@ async function dataUrl(){
            GIST_BASE=c.gist_raw_base||""; }
       catch(e){ GIST_BASE=""; }
     }
-    return GIST_BASE.replace(/\/$/,"")+(currentLab?("/status-"+currentLab+".json"):"/status.json");
+    return GIST_BASE.replace(/\/$/,"")+"/status.json";
   }
-  return "/api/status"+(currentLab?("?lab="+encodeURIComponent(currentLab)):"");
+  return BASE+"api/status";
 }
 async function fetchStatus(){
   var r=await fetch(await dataUrl(),{cache:"no-store"});
   var d=await r.json(); if(d.error) throw new Error(d.error);
-  refreshMs=(d.refresh||10)*1000; render(d);
+  refreshMs=(d.refresh||10)*1000; lastData=d; draw();
 }
 async function tick(){
   try{ await fetchStatus(); }
@@ -365,7 +421,8 @@ async function tick(){
     document.getElementById("updated").textContent="error: "+e.message;
   }finally{ clearTimeout(timer); timer=setTimeout(tick, refreshMs); }
 }
-function tickNow(){ clearTimeout(timer); tick(); }
+tick();           // start the data loop (sets lastData + draws)
+applyState();     // open ?pod= from the URL on load (if present)
 
 applyState();
 </script>
