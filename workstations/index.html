@@ -230,10 +230,15 @@ function render(d){
   document.getElementById("wl-h").textContent = on? "Workloads (filtered)" : "GPU workloads";
   document.getElementById("scope-note").textContent =
     (fl.length? ("filter: "+fl.join(" · ")) : "cluster-wide") + (STATIC? " · static snapshot" : "");
+  // Selector options derived from the data itself (robust to older snapshots
+  // that lack node_names/queue_names).
+  var nodeOpts = (d.nodes||[]).map(function(n){return n.name;});
+  var queueOpts = (d.queues||[]).map(function(q){return q.name;});
+  var labOpts = d.labs || [];
   document.getElementById("filters").innerHTML =
-    filterRow("Lab","lab",d.labs,f.lab) +
-    filterRow("Node","node",d.node_names,f.node) +
-    filterRow("Queue","queue",d.queue_names,f.queue);
+    filterRow("Lab","lab",labOpts,f.lab) +
+    filterRow("Node","node",nodeOpts,f.node) +
+    filterRow("Queue","queue",queueOpts,f.queue);
 
   document.getElementById("errors").innerHTML =
     (d.errors && d.errors.length)? '<div class="errbox">'+esc(d.errors.join("\n"))+'</div>':'';
