@@ -293,16 +293,23 @@ function render(d){
       '<td class="'+(n.conditions?"bad":"muted")+'">'+esc(n.conditions||"—")+'</td>',
     n=>'class="clk" onclick="setFacet(\'node\',\''+n.name+'\')"');
 
+  // Nodes each queue is running on (from the full workload set), short names.
+  var qNodes={};
+  (d.workloads||[]).forEach(function(w){
+    if(w.queue&&w.queue!=="—"&&w.node&&w.node!=="—"){ (qNodes[w.queue]=qNodes[w.queue]||{})[w.node.split(".")[0]]=1; }
+  });
   document.getElementById("queues").innerHTML = table(
-    [{label:"Queue"},{label:"Parent"},{label:"Priority",num:true},
+    [{label:"Queue"},{label:"Nodes"},{label:"Priority",num:true},
      {label:"Quota",num:true},{label:"Used",num:true},{label:"Free",num:true}],
-    filt.queues, q=>
-      '<td>'+esc(q.name)+'</td>'+
-      '<td class="muted">'+esc(q.parent||"—")+'</td>'+
+    filt.queues, q=>{
+      var ns=Object.keys(qNodes[q.name]||{}).sort();
+      return '<td>'+esc(q.name)+'</td>'+
+      '<td class="muted">'+(ns.length?esc(ns.join(", ")):"—")+'</td>'+
       '<td class="num muted">'+(q.priority==null?"—":q.priority)+'</td>'+
       '<td class="num">'+(q.quota==null?'<span class="muted">—</span>':q.quota)+'</td>'+
       '<td class="num">'+q.used+'</td>'+
-      '<td class="num '+(q.free!=null&&q.free<0?"bad":"")+'">'+(q.free==null?'<span class="muted">—</span>':q.free)+'</td>',
+      '<td class="num '+(q.free!=null&&q.free<0?"bad":"")+'">'+(q.free==null?'<span class="muted">—</span>':q.free)+'</td>';
+    },
     q=>'class="clk" onclick="setFacet(\'queue\',\''+q.name+'\')"');
 
   document.getElementById("workloads").innerHTML = table(
