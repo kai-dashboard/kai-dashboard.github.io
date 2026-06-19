@@ -1,0 +1,373 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>kai cluster dashboard</title>
+<style>
+  :root{
+    --bg:#0d1117; --panel:#161b22; --border:#30363d; --fg:#e6edf3;
+    --muted:#8b949e; --green:#3fb950; --red:#f85149; --yellow:#d29922;
+    --blue:#58a6ff; --bar-bg:#21262d;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--fg);
+    font:14px/1.4 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+  header{display:flex;align-items:baseline;gap:16px;flex-wrap:wrap;
+    padding:14px 20px;border-bottom:1px solid var(--border);background:var(--panel)}
+  header h1{font-size:16px;margin:0;font-weight:600}
+  header .meta{color:var(--muted);font-size:12px}
+  header .spacer{flex:1}
+  #status-dot{color:var(--green)}
+  main{padding:20px;max-width:1200px;margin:0 auto}
+  .cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));
+    gap:12px;margin-bottom:22px}
+  .card{background:var(--panel);border:1px solid var(--border);border-radius:8px;
+    padding:14px 16px}
+  .card .label{color:var(--muted);font-size:11px;text-transform:uppercase;
+    letter-spacing:.5px}
+  .card .value{font-size:26px;font-weight:600;margin-top:4px}
+  .card .value small{font-size:14px;color:var(--muted);font-weight:400}
+  section{margin-bottom:26px}
+  section h2{font-size:13px;text-transform:uppercase;letter-spacing:.5px;
+    color:var(--muted);margin:0 0 10px;font-weight:600}
+  table{width:100%;border-collapse:collapse;background:var(--panel);
+    border:1px solid var(--border);border-radius:8px;overflow:hidden}
+  th,td{text-align:left;padding:8px 12px;border-bottom:1px solid var(--border)}
+  th{color:var(--muted);font-weight:600;font-size:11px;text-transform:uppercase;
+    letter-spacing:.5px}
+  tr:last-child td{border-bottom:none}
+  td.num{text-align:right;font-variant-numeric:tabular-nums}
+  .pill{display:inline-block;padding:1px 8px;border-radius:999px;font-size:12px;
+    font-weight:600}
+  .ok{color:var(--green)} .bad{color:var(--red)} .warn{color:var(--yellow)}
+  .pill.ok{background:rgba(63,185,80,.15)} .pill.bad{background:rgba(248,81,73,.15)}
+  .pill.warn{background:rgba(210,153,34,.15)} .pill.idle{background:var(--bar-bg);color:var(--muted)}
+  .bar{position:relative;height:6px;border-radius:3px;background:var(--bar-bg);
+    margin-top:5px;overflow:hidden}
+  .bar>i{position:absolute;left:0;top:0;bottom:0;border-radius:3px;background:var(--blue)}
+  .gpucell{min-width:120px}
+  .muted{color:var(--muted)}
+  .errbox{background:rgba(248,81,73,.1);border:1px solid var(--red);color:#ffb3ad;
+    border-radius:8px;padding:10px 14px;margin-bottom:18px;white-space:pre-wrap;font-size:12px}
+  .empty{color:var(--muted);padding:14px;text-align:center}
+  a{color:var(--blue)}
+  /* lab selector */
+  .labs{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:18px}
+  .labs a{display:inline-block;padding:4px 12px;border-radius:999px;font-size:13px;
+    text-decoration:none;border:1px solid var(--border);background:var(--panel);
+    color:var(--fg)}
+  .labs a:hover{border-color:var(--blue)}
+  .labs a.active{background:var(--blue);border-color:var(--blue);color:#0d1117;font-weight:600}
+  /* clickable workload rows */
+  tr.clk{cursor:pointer}
+  tr.clk:hover td{background:rgba(88,166,255,.08)}
+  /* modal */
+  .modal{position:fixed;inset:0;background:rgba(0,0,0,.6);display:flex;
+    align-items:flex-start;justify-content:center;padding:40px 16px;z-index:50;overflow:auto}
+  .modal.hidden{display:none}
+  .modal .box{background:var(--panel);border:1px solid var(--border);border-radius:10px;
+    width:100%;max-width:820px;padding:0}
+  .modal .mh{display:flex;align-items:center;gap:12px;padding:14px 18px;
+    border-bottom:1px solid var(--border)}
+  .modal .mh h3{margin:0;font-size:15px;word-break:break-all}
+  .modal .mh .x{margin-left:auto;cursor:pointer;color:var(--muted);font-size:20px;
+    background:none;border:none}
+  .modal .mb{padding:16px 18px}
+  .kv{display:grid;grid-template-columns:auto 1fr;gap:4px 16px;margin-bottom:16px;font-size:13px}
+  .kv .k{color:var(--muted)}
+  .ev{font-size:12px;border-left:2px solid var(--border);padding:4px 0 4px 10px;margin:4px 0}
+  .ev.Warning{border-color:var(--yellow)}
+</style>
+<script>window.KAI_STATIC=true;</script>
+</head>
+<body>
+<header>
+  <h1 id="title">kai cluster dashboard</h1>
+  <span class="meta" id="cluster">…</span>
+  <span class="spacer"></span>
+  <span class="meta"><span id="status-dot">●</span> <span id="updated">connecting…</span>
+    · refresh <span id="refresh">?</span>s</span>
+</header>
+<main>
+  <div class="labs" id="labs"></div>
+  <div id="errors"></div>
+  <div class="cards" id="cards"></div>
+  <section><h2 id="nodes-h">Nodes</h2><div id="nodes"></div></section>
+  <section><h2>Queues</h2><div id="queues"></div></section>
+  <section><h2 id="wl-h">GPU workloads</h2><div id="workloads"></div></section>
+  <p class="muted" style="font-size:11px">kai-dashboard v<span id="ver">?</span> · read-only ·
+    <span id="scope-note"></span></p>
+</main>
+<div class="modal hidden" id="modal">
+  <div class="box">
+    <div class="mh"><h3 id="modal-title">pod</h3><button class="x" id="modal-x">✕</button></div>
+    <div class="mb" id="modal-body"></div>
+  </div>
+</div>
+<script>
+// STATIC mode (set by the generated GitHub Pages build): read pre-rendered
+// JSON snapshots from a gist instead of the live /api/* backend. GIST_BASE
+// comes from a sibling config.json so the URL isn't baked into the HTML.
+var STATIC = !!window.KAI_STATIC, GIST_BASE = null;
+function esc(s){return String(s==null?"":s).replace(/[&<>"]/g,c=>(
+  {"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;"}[c]));}
+
+function statusPill(s){
+  var cls = s==="Ready"?"ok":(s==="Cordoned"?"warn":"bad");
+  return '<span class="pill '+cls+'">'+esc(s)+'</span>';
+}
+function gpuCell(used,total){
+  if(!total) return '<span class="muted">—</span>';
+  var pct = total? Math.round(100*used/total):0;
+  var cls = used>=total?"bad":(used>0?"":"muted");
+  return '<div class="gpucell"><span class="'+cls+'">'+used+' / '+total+
+    '</span> <span class="muted">('+(total-used)+' free)</span>'+
+    '<div class="bar"><i style="width:'+pct+'%"></i></div></div>';
+}
+function utilCell(n){
+  if(n.util_avg==null) return '<span class="muted">—</span>';
+  var pct=n.util_avg, cls=pct>=85?"bad":(pct>=40?"warn":"ok");
+  return '<div class="gpucell"><span class="'+cls+'">'+pct+'%</span> '+
+    '<span class="muted">(max '+n.util_max+'%)</span>'+
+    '<div class="bar"><i style="width:'+pct+'%"></i></div></div>';
+}
+function memCell(n){
+  if(n.mem_total_gb==null) return '<span class="muted">—</span>';
+  var pct = n.mem_total_gb? Math.round(100*n.mem_used_gb/n.mem_total_gb):0;
+  return '<div class="gpucell">'+n.mem_used_gb+' / '+n.mem_total_gb+
+    ' <span class="muted">GiB</span><div class="bar"><i style="width:'+pct+'%"></i></div></div>';
+}
+function cpuCell(n){
+  if(n.cpu_pct==null) return '<span class="muted">—</span>';
+  var cls = n.cpu_pct>=90?"bad":(n.cpu_pct>=70?"warn":"");
+  return '<div class="gpucell"><span class="'+cls+'">'+n.cpu_pct+'%</span> '+
+    '<span class="muted">'+n.cpu_used+'/'+n.cpu_total+'c</span>'+
+    '<div class="bar"><i style="width:'+n.cpu_pct+'%"></i></div></div>';
+}
+function ramCell(n){
+  if(n.ram_pct==null) return '<span class="muted">—</span>';
+  var cls = n.ram_pct>=90?"bad":(n.ram_pct>=75?"warn":"");
+  return '<div class="gpucell"><span class="'+cls+'">'+n.ram_pct+'%</span> '+
+    '<span class="muted">'+n.ram_used_gb+'/'+n.ram_total_gb+'G</span>'+
+    '<div class="bar"><i style="width:'+n.ram_pct+'%"></i></div></div>';
+}
+function table(cols, rows, render, rowattr){
+  if(!rows.length) return '<div class="empty">none</div>';
+  var h='<table><thead><tr>';
+  cols.forEach(c=>h+='<th'+(c.num?' class="num"':'')+'>'+esc(c.label)+'</th>');
+  h+='</tr></thead><tbody>';
+  rows.forEach(r=>h+='<tr'+(rowattr?(' '+rowattr(r)):'')+'>'+render(r)+'</tr>');
+  return h+'</tbody></table>';
+}
+
+function card(label,value,cls){
+  return '<div class="card"><div class="label">'+esc(label)+'</div>'+
+    '<div class="value '+(cls||"")+'">'+value+'</div></div>';
+}
+
+function renderLabs(d){
+  var cur=d.lab, html=
+    '<a href="?" class="'+(!cur?"active":"")+'" onclick="navigate(null);return false;">All</a>';
+  (d.labs||[]).forEach(function(l){
+    html+='<a href="?lab='+encodeURIComponent(l)+'" class="'+(cur===l?"active":"")+
+      '" onclick="navigate(\''+l+'\');return false;">'+esc(l)+'</a>';
+  });
+  document.getElementById("labs").innerHTML=html;
+}
+
+function render(d){
+  var lab = d.scope==="lab";
+  document.getElementById("title").textContent = d.title;
+  document.title = d.title + (lab? (" · "+d.lab):"");
+  document.getElementById("cluster").innerHTML =
+    "context <b>"+esc(d.cluster.context)+"</b>"+
+    (d.cluster.server? " · "+esc(d.cluster.server):"");
+  document.getElementById("updated").textContent = "updated "+d.generated_at;
+  document.getElementById("refresh").textContent = d.refresh;
+  document.getElementById("ver").textContent = d.version;
+  document.getElementById("status-dot").className = "ok";
+  document.getElementById("nodes-h").textContent = lab? ("Nodes in use — "+d.lab) : "Nodes";
+  document.getElementById("wl-h").textContent = lab? (d.lab+" — workloads") : "GPU workloads";
+  document.getElementById("scope-note").textContent =
+    (lab? ("lab view: "+d.lab) : "cluster-wide") + (STATIC? " · static snapshot" : "");
+  renderLabs(d);
+
+  document.getElementById("errors").innerHTML =
+    (d.errors && d.errors.length)? '<div class="errbox">'+esc(d.errors.join("\n"))+'</div>':'';
+
+  var s=d.summary;
+  var pendCls = s.pending>0?"bad":"muted";
+  var utilDisp = (s.gpu_util==null)? '<small class="muted">n/a</small>' : s.gpu_util+'%';
+  var utilCls = (s.gpu_util==null)? "muted" : (s.gpu_util>=85?"bad":(s.gpu_util>=40?"warn":"ok"));
+  var cards;
+  if(lab){
+    cards =
+      card("GPUs in use", s.gpu_used) +
+      card("Queue quota", s.gpu_quota==null?0:s.gpu_quota) +
+      card("Quota free", s.gpu_free==null?'<span class="muted">—</span>':s.gpu_free,
+           s.gpu_free!=null&&s.gpu_free<0?"bad":"") +
+      card("Avg GPU util", utilDisp, utilCls) +
+      card("Running", s.running) +
+      card("Pending", s.pending, pendCls);
+  } else {
+    cards =
+      card("GPUs in use", s.gpu_used+' <small>/ '+s.gpu_total+'</small>') +
+      card("GPUs free", s.gpu_free, s.gpu_free>0?"ok":"muted") +
+      card("Avg GPU util", utilDisp, utilCls) +
+      card("Nodes ready", s.nodes_ready+' <small>/ '+s.nodes_total+'</small>',
+           s.nodes_ready===s.nodes_total?"ok":"warn") +
+      card("Running", s.running) +
+      card("Pending", s.pending, pendCls);
+  }
+  document.getElementById("cards").innerHTML = cards;
+
+  document.getElementById("nodes").innerHTML = table(
+    [{label:"Node"},{label:"Status"},{label:"CPU"},{label:"Mem"},
+     {label:"GPU (alloc)"},{label:"GPU util"},{label:"GPU mem"},
+     {label:"Product"},{label:"Heartbeat",num:true},{label:"Conditions"}],
+    d.nodes, n=>
+      '<td>'+esc(n.name)+'</td>'+
+      '<td>'+statusPill(n.status)+'</td>'+
+      '<td>'+cpuCell(n)+'</td>'+
+      '<td>'+ramCell(n)+'</td>'+
+      '<td>'+gpuCell(n.gpu_used,n.gpu_total)+'</td>'+
+      '<td>'+utilCell(n)+'</td>'+
+      '<td>'+memCell(n)+'</td>'+
+      '<td class="muted">'+esc(n.product)+'</td>'+
+      '<td class="num">'+esc(n.heartbeat)+'</td>'+
+      '<td class="'+(n.conditions?"bad":"muted")+'">'+esc(n.conditions||"—")+'</td>');
+
+  document.getElementById("queues").innerHTML = table(
+    [{label:"Queue"},{label:"Parent"},{label:"Priority",num:true},
+     {label:"Quota",num:true},{label:"Used",num:true},{label:"Free",num:true}],
+    d.queues, q=>
+      '<td>'+esc(q.name)+'</td>'+
+      '<td class="muted">'+esc(q.parent||"—")+'</td>'+
+      '<td class="num muted">'+(q.priority==null?"—":q.priority)+'</td>'+
+      '<td class="num">'+(q.quota==null?'<span class="muted">—</span>':q.quota)+'</td>'+
+      '<td class="num">'+q.used+'</td>'+
+      '<td class="num '+(q.free!=null&&q.free<0?"bad":"")+'">'+(q.free==null?'<span class="muted">—</span>':q.free)+'</td>');
+
+  document.getElementById("workloads").innerHTML = table(
+    [{label:"Namespace"},{label:"Name"},{label:"Queue"},{label:"GPUs",num:true},
+     {label:"Status"},{label:"Node"},{label:"Age",num:true}],
+    d.workloads, w=>{
+      var cls = w.status==="Running"?"ok":(w.status==="Pending"?"warn":"muted");
+      return '<td class="muted">'+esc(w.namespace)+'</td>'+
+      '<td>'+esc(w.name)+'</td>'+
+      '<td class="muted">'+esc(w.queue)+'</td>'+
+      '<td class="num">'+(w.gpus||'<span class="muted">0</span>')+'</td>'+
+      '<td><span class="'+cls+'">'+esc(w.status)+'</span></td>'+
+      '<td class="muted">'+esc(w.node)+'</td>'+
+      '<td class="num muted">'+esc(w.age)+'</td>';
+    },
+    STATIC? null : w=>'class="clk" onclick="openPodNav(\''+w.namespace+'\',\''+w.name+'\')"');
+}
+
+// ── pod detail modal ──
+function renderPod(d){
+  var kv='<div class="kv">';
+  function row(k,v){ kv+='<div class="k">'+esc(k)+'</div><div>'+v+'</div>'; }
+  var pc = d.phase==="Running"?"ok":(d.phase==="Pending"?"warn":"muted");
+  row("Status",'<span class="'+pc+'">'+esc(d.phase||"?")+'</span>'+
+      (d.reason?' <span class="muted">('+esc(d.reason)+')</span>':''));
+  row("Node", esc(d.node||"—"));
+  row("Queue", esc(d.queue||"—"));
+  row("Priority", esc(d.priority||"—"));
+  row("Started", esc(d.start||"—"));
+  if(d.message) row("Message",'<span class="muted">'+esc(d.message)+'</span>');
+  kv+='</div>';
+  var ct = table(
+    [{label:"Container"},{label:"Image"},{label:"GPU",num:true},{label:"CPU req"},
+     {label:"Mem req"},{label:"State"},{label:"Restarts",num:true}],
+    d.containers, c=>
+      '<td>'+esc(c.name)+'</td>'+
+      '<td class="muted" style="word-break:break-all">'+esc(c.image)+'</td>'+
+      '<td class="num">'+(c.gpu||'<span class="muted">0</span>')+'</td>'+
+      '<td class="muted">'+esc(c.cpu_req||"—")+'</td>'+
+      '<td class="muted">'+esc(c.mem_req||"—")+'</td>'+
+      '<td><span class="'+(c.state==="running"?"ok":(c.state==="waiting"?"warn":"muted"))+'">'+esc(c.state)+'</span></td>'+
+      '<td class="num '+(c.restarts?"warn":"muted")+'">'+c.restarts+'</td>');
+  var us = (d.usage&&d.usage.length)? table(
+    [{label:"Container"},{label:"CPU (cores)",num:true},{label:"Mem (GiB)",num:true}],
+    d.usage, u=>'<td>'+esc(u.name)+'</td><td class="num">'+u.cpu+'</td><td class="num">'+u.mem_gb+'</td>')
+    : '<div class="empty">no live metrics (metrics-server may lag pod start)</div>';
+  var ev = (d.events&&d.events.length)? d.events.map(e=>
+    '<div class="ev '+esc(e.type||"")+'"><b>'+esc(e.reason||"")+'</b> '+
+    '<span class="muted">'+esc(e.age||"")+'</span><br>'+esc(e.message||"")+'</div>').join("")
+    : '<div class="empty">no recent events</div>';
+  document.getElementById("modal-body").innerHTML =
+    kv + '<h2 style="margin-top:0">Containers</h2>'+ct +
+    '<h2>Live usage</h2>'+us + '<h2>Recent events</h2>'+ev;
+}
+async function openPod(ns,name){
+  var m=document.getElementById("modal");
+  document.getElementById("modal-title").textContent = ns+" / "+name;
+  document.getElementById("modal-body").innerHTML = '<p class="muted">loading…</p>';
+  m.classList.remove("hidden");
+  try{
+    var r=await fetch("/api/pod?namespace="+encodeURIComponent(ns)+"&name="+encodeURIComponent(name),{cache:"no-store"});
+    var d=await r.json(); if(d.error) throw new Error(d.error);
+    renderPod(d);
+  }catch(e){ document.getElementById("modal-body").innerHTML='<div class="errbox">'+esc(e.message)+'</div>'; }
+}
+function closeModal(){ document.getElementById("modal").classList.add("hidden"); }
+
+// ── routing (bookmarkable ?lab= and ?pod=ns/name) ──
+function qs(){ return new URLSearchParams(location.search); }
+var currentLab=null, refreshMs=10000, timer=null;
+
+function navigate(lab){
+  var p=qs(); if(lab) p.set("lab",lab); else p.delete("lab"); p.delete("pod");
+  history.pushState({}, "", location.pathname + (p.toString()?("?"+p):""));
+  applyState();
+}
+function openPodNav(ns,name){
+  var p=qs(); p.set("pod", ns+"/"+name);
+  history.pushState({}, "", location.pathname+"?"+p);
+  openPod(ns,name);
+}
+function closeModalNav(){ if(qs().get("pod")) history.back(); else closeModal(); }
+function applyState(){
+  currentLab = qs().get("lab") || null;
+  tickNow();
+  if(STATIC){ closeModal(); return; }   // no per-pod backend in static mode
+  var pod = qs().get("pod");
+  if(pod){ var i=pod.indexOf("/"); openPod(pod.slice(0,i), pod.slice(i+1)); }
+  else closeModal();
+}
+window.addEventListener("popstate", applyState);
+document.getElementById("modal-x").onclick = closeModalNav;
+document.getElementById("modal").addEventListener("click", function(e){ if(e.target.id==="modal") closeModalNav(); });
+document.addEventListener("keydown", function(e){ if(e.key==="Escape") closeModalNav(); });
+
+async function dataUrl(){
+  if(STATIC){
+    if(GIST_BASE==null){
+      try{ var c=await (await fetch("config.json",{cache:"no-store"})).json();
+           GIST_BASE=c.gist_raw_base||""; }
+      catch(e){ GIST_BASE=""; }
+    }
+    return GIST_BASE.replace(/\/$/,"")+(currentLab?("/status-"+currentLab+".json"):"/status.json");
+  }
+  return "/api/status"+(currentLab?("?lab="+encodeURIComponent(currentLab)):"");
+}
+async function fetchStatus(){
+  var r=await fetch(await dataUrl(),{cache:"no-store"});
+  var d=await r.json(); if(d.error) throw new Error(d.error);
+  refreshMs=(d.refresh||10)*1000; render(d);
+}
+async function tick(){
+  try{ await fetchStatus(); }
+  catch(e){
+    document.getElementById("status-dot").className="bad";
+    document.getElementById("updated").textContent="error: "+e.message;
+  }finally{ clearTimeout(timer); timer=setTimeout(tick, refreshMs); }
+}
+function tickNow(){ clearTimeout(timer); tick(); }
+
+applyState();
+</script>
+</body>
+</html>
